@@ -9,12 +9,23 @@ package mr
 //
 // example to show how to declare the arguments
 // and reply for an RPC.
+type jobPhase string
+
+const (
+	mapPhase      jobPhase = "mapPhase"
+	reducePhase            = "reducePhase"
+	registerPhase          = "registerPhase"
+)
+
 type Args struct {
-//	X int
+	//	phase标记当前阶段为map或是reduce
+	phase jobPhase
 }
 
 type Reply struct {
-	file string
+	fileName string
+	taskNum  int
+	nTask    int
 }
 
 //
@@ -29,4 +40,3 @@ type ExampleReply struct {
 */
 
 // Add your RPC definitions here.
-
