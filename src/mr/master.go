@@ -58,15 +58,18 @@ func (m *Master) Schedule(args *MRArgs, reply *MRReply) error {
 		m.Lock()
 
 		if args.Phase == registerPhase {
+			//新worker注册
 			fmt.Printf("new Worker\n", m.WorkerNum)
 			m.WorkerNum++
 		} else if args.TaskNum != -1 {
+			//此时代表有任务完成
 			m.MapCompleted++
 			m.MapCompletedFlag[args.TaskNum] = true
 			fmt.Printf("map task %v completed\n", args.TaskNum)
 		}
 
 		if m.MapTask < m.NMap {
+			//还有新的map任务未完成
 			//m.TaskTimeout[args.]
 			reply.FileName = m.Files[m.MapTask]
 			timeout, _ := time.ParseDuration("10s")
@@ -76,11 +79,12 @@ func (m *Master) Schedule(args *MRArgs, reply *MRReply) error {
 			//fmt.Printf("send map task %v %v\n", reply.TaskNum, reply.FileName)
 			m.MapTask++
 		} else if m.MapCompleted < m.NMap {
-
+			//有旧任务还未完成
 			//fmt.Println(m.MapCompletedFlag)
 			for i := 0; i < m.NMap; i++ {
 				now := time.Now()
 				if m.TaskTimeout[i].Before(now) && !m.MapCompletedFlag[i] {
+					//旧任务已经到达时限
 					timeout, _ := time.ParseDuration("10s")
 					reply.FileName = m.Files[i]
 					m.TaskTimeout[i] = time.Now().Add(timeout)
@@ -95,6 +99,7 @@ func (m *Master) Schedule(args *MRArgs, reply *MRReply) error {
 			//fmt.Println(m.TaskTimeout)
 			//fmt.Println(time.Now())
 			//fmt.Printf("map task %v %v\n", m.MapCompleted, m.NMap)
+			//无到期的旧任务，让worker挂起继续等待
 			reply.TaskNum = -1
 
 		} else {
@@ -103,7 +108,6 @@ func (m *Master) Schedule(args *MRArgs, reply *MRReply) error {
 		m.Unlock()
 	} else if args.Phase == reducePhase || args.Phase == waitReducePhase {
 		m.Lock()
-
 		if args.Phase == reducePhase && args.TaskNum != -1 {
 			m.ReduceCompleted++
 			m.ReduceCompletedFlag[args.TaskNum] = true
@@ -111,9 +115,11 @@ func (m *Master) Schedule(args *MRArgs, reply *MRReply) error {
 		}
 
 		if m.MapCompleted < m.NMap {
+			//
 			//fmt.Println("reduce task wait %v %v\n", m.MapCompleted, m.NMap)
 			reply.TaskNum = -1
 		} else if m.ReduceTask < m.NReduce {
+			//有新的reduce任务未完成
 			//fmt.Println("reduce task get")
 			reply.TaskNum = m.ReduceTask
 			reply.NTask = m.NMap
@@ -122,21 +128,22 @@ func (m *Master) Schedule(args *MRArgs, reply *MRReply) error {
 			//fmt.Printf("send reduce task %v\n", reply.TaskNum)
 			m.ReduceTask++
 		} else if m.ReduceCompleted < m.NReduce {
+			//无新的reduce任务，但是有旧的reduce任务
 			now := time.Now()
 			for i := 0; i < m.NMap; i++ {
 				if m.TaskTimeout[i].Before(now) && !m.ReduceCompletedFlag[i] {
-
+					//旧的reduce任务到期了
 					timeout, _ := time.ParseDuration("10s")
 					m.TaskTimeout[i] = time.Now().Add(timeout)
 					reply.TaskNum = i
 					reply.NTask = m.NMap
 					m.Unlock()
 					return nil
-
 				}
 			}
 
-			reply.TaskNum = -3
+			reply.TaskNum = -1
+			//无到期的旧任务，让worker挂起继续等待
 		} else {
 			reply.TaskNum = -2
 			//fmt.Println("reduce task complete")

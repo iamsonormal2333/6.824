@@ -51,6 +51,8 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	reply := MRReply{}
 	call("Master.Schedule", &args, &reply)
+	//向master注册
+
 	//fmt.Printf("get map task %v\n", reply.NTask)
 
 	// Your worker implementation here.
@@ -61,10 +63,14 @@ func Worker(mapf func(string, string) []KeyValue,
 	//fmt.Printf("get map task %v\n", reply.NTask)
 
 	for reply.TaskNum != -2 {
+
+		//reply的TaskNum为-1代表此时仍然有任务未完成，但是这些任务还在生存周期内
+		//reply的TaskNum为-2代表此时仍然所有任务都已完成
 		//fmt.Println("get map task")
 		fmt.Printf("get map task %v %v\n", reply.TaskNum, reply.FileName)
 
 		if reply.TaskNum == -1 {
+			//休眠3s再向master询问
 			time.Sleep(time.Duration(3) * time.Second)
 			fmt.Printf("worker wake up\n")
 			args = MRArgs{}
@@ -76,6 +82,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			continue
 		}
 
+		//这里与mrsequential.go相似，完成map任务，并输出到中间文件中
 		intermediate := []KeyValue{}
 		filename := reply.FileName
 		file, err := os.Open(filename)
@@ -141,17 +148,13 @@ func Worker(mapf func(string, string) []KeyValue,
 	reply = MRReply{}
 
 	call("Master.Schedule", &args, &reply)
-	for reply.TaskNum == -1 {
-		args = MRArgs{}
-		args.Phase = waitReducePhase
-
-		reply = MRReply{}
-		call("Master.Schedule", &args, &reply)
-	}
 
 	for reply.TaskNum != -2 {
 
-		if reply.TaskNum == -3 {
+		//reply的TaskNum为-1代表此时仍然有任务未完成，但是这些任务还在生存周期内
+		//reply的TaskNum为-2代表此时仍然所有任务都已完成
+
+		if reply.TaskNum == -1 {
 			time.Sleep(time.Duration(1) * time.Second)
 			args = MRArgs{}
 			args.Phase = reducePhase
