@@ -12,24 +12,26 @@ package mr
 type jobPhase string
 
 const (
-	mapPhase      jobPhase = "mapPhase"
-	reducePhase            = "reducePhase"
-	registerPhase          = "registerPhase"
+	mapPhase        jobPhase = "mapPhase"
+	reducePhase              = "reducePhase"
+	registerPhase            = "registerPhase"
+	waitReducePhase          = "waitReducePhase"
 )
 
-type Args struct {
+type MRArgs struct {
 	//	phase标记当前阶段为map或是reduce
-	phase jobPhase
+	Phase   jobPhase
+	TaskNum int
 }
 
-type Reply struct {
-	fileName string
-	taskNum  int
-	nTask    int
+type MRReply struct {
+	FileName string
+	TaskNum  int
+	NTask    int
 }
 
 //
-/*
+
 type ExampleArgs struct {
 	X int
 }
@@ -37,6 +39,5 @@ type ExampleArgs struct {
 type ExampleReply struct {
 	Y int
 }
-*/
 
 // Add your RPC definitions here.

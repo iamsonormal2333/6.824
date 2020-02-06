@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"time"
 )
 
 //
@@ -39,29 +40,44 @@ func ihash(key string) int {
 //
 // main/mrworker.go calls this function.
 //
+
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	fmt.Println("make worker")
+
+	args := MRArgs{}
+	args.Phase = registerPhase
+
+	reply := MRReply{}
+	call("Master.Schedule", &args, &reply)
+	//fmt.Printf("get map task %v\n", reply.NTask)
 
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the master.
 	// CallExample()
 
-	args := Args{}
-	args.phase = registerPhase
+	//fmt.Printf("get map task %v\n", reply.NTask)
 
-	reply := Reply{}
+	for reply.TaskNum != -2 {
+		//fmt.Println("get map task")
+		fmt.Printf("get map task %v %v\n", reply.TaskNum, reply.FileName)
 
-	call("Master.schedule", &args, &reply)
+		if reply.TaskNum == -1 {
+			time.Sleep(time.Duration(3) * time.Second)
+			fmt.Printf("worker wake up\n")
+			args = MRArgs{}
+			args.Phase = mapPhase
+			args.TaskNum = -1
 
-	fmt.Printf("get map task %v\n", reply.nTask)
+			reply = MRReply{}
+			call("Master.Schedule", &args, &reply)
+			continue
+		}
 
-	for reply.fileName != "" {
-		fmt.Println("get map task")
 		intermediate := []KeyValue{}
-		filename := reply.fileName
+		filename := reply.FileName
 		file, err := os.Open(filename)
 		if err != nil {
 			log.Fatalf("cannot open %v", filename)
@@ -75,65 +91,82 @@ func Worker(mapf func(string, string) []KeyValue,
 		intermediate = append(intermediate, kva...)
 		sort.Sort(ByKey(intermediate))
 
-		filesenc := make([]*json.Encoder, reply.nTask)
+		filesenc := make([]*json.Encoder, reply.NTask)
+		files := make([]*os.File, reply.NTask)
 
-		for i := 0; i < reply.nTask; i++ {
-			fileName := "mr-" + strconv.Itoa(reply.taskNum) + "-" + strconv.Itoa(i)
+		for i := 0; i < reply.NTask; i++ {
+			fileName := "mr-" + strconv.Itoa(reply.TaskNum) + "-" + strconv.Itoa(i)
 			fout, err := os.Create(fileName)
 			if err != nil {
 				fmt.Println(fileName, err)
 				return
 			}
 			filesenc[i] = json.NewEncoder(fout)
+			files[i] = fout
 		}
 
 		i := 0
 		for i < len(intermediate) {
-			j := i + 1
-			for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-				j++
-			}
+			j := i
+			output := KeyValue{intermediate[i].Key, intermediate[i].Value}
 
-			values := []string{}
-			for k := i; k < j; k++ {
-				values = append(values, intermediate[k].Value)
+			for ; j < len(intermediate) && intermediate[j].Key == intermediate[i].Key; j++ {
+
+				err := filesenc[ihash(intermediate[i].Key)%reply.NTask].Encode(&output)
+				if err != nil {
+					fmt.Printf("%s Encode Failed %v\n", intermediate[i].Key, err)
+				}
 			}
-			output := reducef(intermediate[i].Key, values)
 
 			// this is the correct format for each line of Reduce output.
-			err := filesenc[ihash(intermediate[i].Key)%reply.nTask].Encode(&output)
-			if err != nil {
-				fmt.Printf("%s Encode Failed %v\n", intermediate[i].Key, err)
-			}
 
 			i = j
 		}
 
-		args = Args{}
-		args.phase = reducePhase
+		for _, f := range files {
+			f.Close()
+		}
 
-		reply = Reply{}
-		call("Master.schedule", &args, &reply)
+		args = MRArgs{}
+		args.Phase = mapPhase
+		args.TaskNum = reply.TaskNum
+
+		reply = MRReply{}
+		call("Master.Schedule", &args, &reply)
 	}
 
-	args = Args{}
-	args.phase = reducePhase
+	args = MRArgs{}
+	args.Phase = waitReducePhase
 
-	reply = Reply{}
+	reply = MRReply{}
 
-	call("Master.schedule", &args, &reply)
-	for reply.taskNum == -1 {
-		args = Args{}
-		args.phase = reducePhase
+	call("Master.Schedule", &args, &reply)
+	for reply.TaskNum == -1 {
+		args = MRArgs{}
+		args.Phase = waitReducePhase
 
-		reply = Reply{}
-		call("Master.schedule", &args, &reply)
+		reply = MRReply{}
+		call("Master.Schedule", &args, &reply)
 	}
 
-	for reply.taskNum != -2 {
+	for reply.TaskNum != -2 {
+
+		if reply.TaskNum == -3 {
+			time.Sleep(time.Duration(1) * time.Second)
+			args = MRArgs{}
+			args.Phase = reducePhase
+			args.TaskNum = -1
+
+			reply = MRReply{}
+			call("Master.Schedule", &args, &reply)
+			continue
+		}
+
+		fmt.Printf("get reduce task %v\n", reply.TaskNum)
+
 		kva := []KeyValue{}
-		for j := 0; j < reply.taskNum; j++ {
-			filename := "mr-" + strconv.Itoa(j) + "-" + strconv.Itoa(reply.taskNum)
+		for j := 0; j < reply.NTask; j++ {
+			filename := "mr-" + strconv.Itoa(j) + "-" + strconv.Itoa(reply.TaskNum)
 			file, err := os.Open(filename)
 			if err != nil {
 				break
@@ -148,12 +181,15 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			file.Close()
 		}
+
 		sort.Sort(ByKey(kva))
 
-		oname := "mr-out-" + strconv.Itoa(reply.taskNum)
+		oname := "mr-out-" + strconv.Itoa(reply.TaskNum)
 		ofile, _ := os.Create(oname)
 
 		i := 0
+
+		fmt.Printf("reduce taks %v length %v\n", reply.TaskNum, len(kva))
 		for i < len(kva) {
 			j := i + 1
 			for j < len(kva) && kva[j].Key == kva[i].Key {
@@ -171,11 +207,12 @@ func Worker(mapf func(string, string) []KeyValue,
 			i = j
 		}
 
-		args = Args{}
-		args.phase = reducePhase
+		args = MRArgs{}
+		args.Phase = reducePhase
+		args.TaskNum = reply.TaskNum
 
-		reply = Reply{}
-		call("Master.schedule", &args, &reply)
+		reply = MRReply{}
+		call("Master.Schedule", &args, &reply)
 	}
 
 }
@@ -186,7 +223,8 @@ func Worker(mapf func(string, string) []KeyValue,
 // the RPC argument and reply types are defined in rpc.go.
 //
 /*
-func CallExample() {
+func Worker(mapf func(string, string) []KeyValue,
+	reducef func(string, []string) string) {
 
 	// declare an argument structure.
 	args := ExampleArgs{}
@@ -204,7 +242,6 @@ func CallExample() {
 	fmt.Printf("reply.Y %v\n", reply.Y)
 }
 */
-
 //
 // send an RPC request to the master, wait for the response.
 // usually returns true.
